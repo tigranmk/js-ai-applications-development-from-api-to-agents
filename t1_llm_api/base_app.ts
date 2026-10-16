@@ -20,13 +20,31 @@ import AIClient from "./base_client";
  * @param client The AI client instance to use for generating responses.
  */
 export async function start(stream: boolean, client: AIClient) {
-  //TODO:
-  // - Create a Conversation instance
-  // - Set up a readline interface for user input
-  // - Loop until user types 'exit':
-  //     - Prompt the user for input
-  //     - Add a USER Message to the conversation
-  //     - Call client.streamResponse or client.response based on `stream`
-  //     - Add the AI response Message to the conversation
-  throw new Error("Not implemented.");
+  const conversation = new Conversation();
+
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  console.log("💬 Chat started. Type 'exit' to quit.");
+
+  while (true) {
+    const input = await rl.question("You: ");
+
+    if (input.trim().toLowerCase() === "exit") {
+      console.log("Exiting the chat. Goodbye!");
+      break;
+    }
+
+    conversation.addMessage(new Message(Role.USER, input));
+
+    const aiMessage = stream
+      ? await client.streamResponse(conversation.messages)
+      : await client.response(conversation.messages);
+
+    conversation.addMessage(aiMessage);
+  }
+
+  rl.close();
 }

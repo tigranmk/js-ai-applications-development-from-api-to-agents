@@ -1,5 +1,3 @@
-import Anthropic from "@anthropic-ai/sdk";
-
 import AIClient from "../base_client";
 
 import { Message, Role } from "../../commons";
@@ -24,15 +22,39 @@ export class CustomAnthropicAIClient extends AIClient {
    * The response is printed to stdout before being returned.
    */
   response = async (messages: Array<Message>): Promise<Message> => {
-    //TODO:
-    // https://docs.anthropic.com/en/api/messages-examples
-    // - Prepare headers with x-api-key, anthropic-version, and content type
-    // - Build request body with system prompt, messages, and max_tokens
-    // - Execute POST request to the API (use fetch)
-    // - Parse the response (content blocks)
-    // - Print the response to console
-    // - Return an ASSISTANT Message
-    throw new Error("Not implemented.");
+    const claudeMessages = messages.map((message) => ({
+      role: message.role,
+      content: message.content,
+    }));
+
+    const res = await fetch(this.endpoint, {
+      method: "POST",
+      headers: {
+        "x-api-key": this.apiKey,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: this.modelName,
+        max_tokens: 1024,
+        system: this.systemPrompt,
+        messages: claudeMessages,
+      }),
+    });
+
+    if (!res.ok) {
+      throw new Error(`Anthropic API error ${res.status}: ${await res.text()}`);
+    }
+
+    const data = (await res.json()) as { content: Array<{ type: string; text?: string }> };
+
+    const text = data.content
+      .map((block) => (block.type === "text" ? block.text ?? "" : ""))
+      .join("");
+
+    console.log(text);
+
+    return new Message(Role.ASSISTANT, text);
   }
 
   /**
@@ -50,15 +72,67 @@ export class CustomAnthropicAIClient extends AIClient {
    * Each delta is printed to stdout as it arrives.
    */
   streamResponse = async (messages: Array<Message>): Promise<Message> => {
-    //TODO:
-    // https://docs.anthropic.com/en/docs/build-with-claude/streaming
-    // - Prepare headers with x-api-key, anthropic-version, and content type
-    // - Build request body with system prompt, messages, max_tokens, and stream: true
-    // - Execute POST request to the API (use fetch)
-    // - Read the SSE stream: parse "data: " lines for 'content_block_delta' events
-    // - Write text deltas to stdout
-    // - Break out of the loop on 'message_stop' event
-    // - Return the assembled ASSISTANT Message
-    throw new Error("Not implemented.");
+    const claudeMessages = messages.map((message) => ({
+      role: message.role,
+      content: message.content,
+    }));
+
+    const res = await fetch(this.endpoint, {
+      method: "POST",
+      headers: {
+        "x-api-key": this.apiKey,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: this.modelName,
+        max_tokens: 1024,
+        system: this.systemPrompt,
+        messages: claudeMessages,
+        stream: true,
+      }),
+    });
+
+    if (!res.ok || !res.body) {
+      throw new Error(`Anthropic API error ${res.status}: ${await res.text()}`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+
+    let buffer = "";
+    let fullText = "";
+    let done = false;
+
+    while (!done) {
+      const { done: readerDone, value } = await reader.read();
+      done = readerDone;
+
+      buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) {
+          continue;
+        }
+
+        const event = JSON.parse(line.slice("data: ".length));
+
+        if (event.type === "content_block_delta" && event.delta?.type === "text_delta") {
+          process.stdout.write(event.delta.text);
+          fullText += event.delta.text;
+        }
+
+        if (event.type === "message_stop") {
+          done = true;
+          break;
+        }
+      }
+    }
+
+    console.log();
+
+    return new Message(Role.ASSISTANT, fullText);
   }
 }

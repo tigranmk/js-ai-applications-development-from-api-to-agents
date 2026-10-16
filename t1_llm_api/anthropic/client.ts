@@ -22,12 +22,9 @@ export class AnthropicAIClient extends AIClient {
    */
   constructor(...args: ConstructorParameters<typeof AIClient>) {
     super(...args);
-    //TODO:
-    // - Initialize the Anthropic SDK client https://github.com/anthropics/anthropic-sdk-typescript?tab=readme-ov-file#getting-started
-    // Useful links with request/response samples:
-    //   - https://docs.anthropic.com/en/api/overview
-    //   - https://docs.anthropic.com/en/api/messages
-    throw new Error("Not implemented.");
+    this.client = new Anthropic({
+      apiKey: this.apiKey,
+    });
   }
 
   /**
@@ -41,11 +38,25 @@ export class AnthropicAIClient extends AIClient {
    * The response is printed to stdout before being returned.
    */
   response = async (messages: Array<Message>): Promise<Message> => {
-    //TODO:
-    // - Call the SDK client (use system parameter for system prompt)
-    // - Print the response to console
-    // - Return an ASSISTANT Message
-    throw new Error("Not implemented.");
+    const claudeMessages = messages.map((message) => ({
+      role: message.role as "user" | "assistant",
+      content: message.content,
+    }));
+
+    const response = await this.client.messages.create({
+      model: this.modelName,
+      max_tokens: 1024,
+      system: this.systemPrompt,
+      messages: claudeMessages,
+    });
+
+    const text = response.content
+      .map((block) => (block.type === "text" ? block.text : ""))
+      .join("");
+
+    console.log(text);
+
+    return new Message(Role.ASSISTANT, text);
   };
 
   /**
@@ -61,10 +72,29 @@ export class AnthropicAIClient extends AIClient {
    * Each delta is printed to stdout as it arrives for real-time display.
    */
   streamResponse = async (messages: Array<Message>): Promise<Message> => {
-    //TODO:
-    // - Call the SDK client with streaming (use system parameter for system prompt)
-    // - Listen for text events and write to stdout
-    // - Return the assembled ASSISTANT Message
-    throw new Error("Not implemented.");
+    const claudeMessages = messages.map((message) => ({
+      role: message.role as "user" | "assistant",
+      content: message.content,
+    }));
+
+    const stream = this.client.messages.stream({
+      model: this.modelName,
+      max_tokens: 1024,
+      system: this.systemPrompt,
+      messages: claudeMessages,
+    });
+
+    stream.on("text", (textDelta) => {
+      process.stdout.write(textDelta);
+    });
+
+    const finalMessage = await stream.finalMessage();
+    console.log();
+
+    const text = finalMessage.content
+      .map((block) => (block.type === "text" ? block.text : ""))
+      .join("");
+
+    return new Message(Role.ASSISTANT, text);
   };
 }
