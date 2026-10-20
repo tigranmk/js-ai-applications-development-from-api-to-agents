@@ -10,15 +10,20 @@ import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
 
 import { OPENAI_API_KEY } from "../commons";
 
-//TODO:
-// Create a system prompt that:
-//   - Defines the assistant's role (microwave manual expert)
-//   - Describes the structure of the user message:
-//       - `RAG CONTEXT`: retrieved document chunks
-//       - `USER QUESTION`: the actual user question
-//   - Instructs the model to answer ONLY from the RAG context / conversation history
-//   - Instructs it to refuse questions not covered by the context
-const SYSTEM_PROMPT = `NEED_TO_IMPLEMENT`;
+const INDEX_DIR = path.join(__dirname, "microwave_index");
+const MANUAL_PATH = path.join(__dirname, "microwave_manual.txt");
+
+const SYSTEM_PROMPT = `You are an expert assistant for the Microwave Oven User Manual (model DW 395 HCG).
+
+Each user message has two parts:
+- "##RAG CONTEXT:" contains chunks retrieved from the manual.
+- "##USER QUESTION:" contains the actual question from the user.
+
+Rules:
+- Answer ONLY from the RAG context and the conversation history.
+- If the answer is not covered by them, or the question is unrelated to the microwave oven, politely refuse and say you can only answer questions covered by the microwave manual.
+- Do not use outside knowledge or make assumptions beyond the provided context.
+- Keep answers concise and accurate.`;
 
 // Template that injects retrieved context and the user question into a single prompt string
 const getUserPrompt = (context: string, query: string) => `##RAG CONTEXT:
@@ -41,54 +46,60 @@ class MicrowaveRAG {
     this.ready = this.setupVectorStore();
   }
 
-  //TODO:
-  // Check if the FAISS index folder already exists on disk.
-  //   - If yes: load it with FaissStore.load()
-  //   - If no:  call createNewIndex() to build and save a fresh one
   private async setupVectorStore(): Promise<void> {
-    throw new Error("Not implemented");
+    if (fs.existsSync(path.join(INDEX_DIR, "faiss.index"))) {
+      console.log("📂 Loading existing FAISS index...");
+      this.vectorStore = await FaissStore.load(INDEX_DIR, this.embeddings);
+    } else {
+      console.log("🛠️  Building a new FAISS index...");
+      this.vectorStore = await this.createNewIndex();
+    }
   }
 
-  //TODO:
-  // Build a new FAISS index from the microwave manual:
-  //   - Load 'microwave_manual.txt' with TextLoader
-  //   - Split into chunks with RecursiveCharacterTextSplitter
-  //   - Create the store with FaissStore.fromDocuments()
-  //   - Save the index locally for future runs
   private async createNewIndex(): Promise<FaissStore> {
-    throw new Error("Not implemented");
+    const documents = await new TextLoader(MANUAL_PATH).load();
+    const splitter = new RecursiveCharacterTextSplitter({
+      chunkSize: 300,
+      chunkOverlap: 40,
+      separators: ["\n\n", "\n", ". ", " ", ""],
+    });
+    const chunks = await splitter.splitDocuments(documents);
+    const store = await FaissStore.fromDocuments(chunks, this.embeddings);
+    await store.save(INDEX_DIR);
+    return store;
   }
 
-  //TODO:
-  // Search the vector store for chunks most relevant to the query.
-  //   - Use similaritySearchWithScore(query, k)
-  //   - Print each chunk's L2 distance score and content
-  //   - Return all matching chunks joined with "\n\n"
-  // ---
-  // Hint: try different values of `k` and `scoreThreshold` to see how they
-  //       affect retrieval quality and LLM answer accuracy.
-  //       Note: scoreThreshold is a maximum L2 distance (lower = more similar).
-  //       FAISS does NOT return 0–1 relevance scores — a value of 1.0 may be
-  //       too strict for some queries and return no results at all. Try 0.5–2.0.
+  // scoreThreshold is a maximum L2 distance (lower = more similar).
   async retrieveContext(query: string, k = 4, scoreThreshold = 1.0): Promise<string> {
-    throw new Error("Not implemented");
+    console.log(`\n🔍 Retrieving top ${k} chunks (max L2 distance ${scoreThreshold})...`);
+    const results = await this.vectorStore.similaritySearchWithScore(query, k);
+
+    const relevant = results.filter(([, score]) => score <= scoreThreshold);
+    relevant.forEach(([doc, score]) => {
+      console.log(`Score (L2 distance): ${score.toFixed(4)}\n${doc.pageContent}\n${"-".repeat(40)}`);
+    });
+    if (relevant.length === 0) {
+      console.log("No chunks passed the score threshold.");
+    }
+
+    return relevant.map(([doc]) => doc.pageContent).join("\n\n");
   }
 
-  //TODO:
-  // Format the user prompt by injecting context and query into getUserPrompt().
-  //   - Print the formatted prompt
-  //   - Return the formatted string
   augmentPrompt(context: string, query: string): string {
-    throw new Error("Not implemented");
+    const prompt = getUserPrompt(context, query);
+    console.log(`\n🔗 Augmented prompt:\n${prompt}\n`);
+    return prompt;
   }
 
-  //TODO:
-  // Send the augmented prompt to the LLM and return its answer.
-  //   - Build a messages array: [SystemMessage(SYSTEM_PROMPT), HumanMessage(augmentedPrompt)]
-  //   - Invoke llmClient and print the response content
-  //   - Return the response content as a string
   async generateAnswer(augmentedPrompt: string): Promise<string> {
-    throw new Error("Not implemented");
+    const response = await this.llmClient.invoke([
+      new SystemMessage(SYSTEM_PROMPT),
+      new HumanMessage(augmentedPrompt),
+    ]);
+
+    const answer = typeof response.content === "string" ? response.content : JSON.stringify(response.content);
+    console.log(`\n🤖 Answer:\n${answer}\n`);
+    return answer;
   }
 }
 
@@ -110,17 +121,30 @@ const main = async (rag: MicrowaveRAG) => {
       process.exit(0);
     }
 
-    //TODO:
-    // Execute the 3-step RAG pipeline for each user question:
-    //   Step 1 (Retrieval):   call rag.retrieveContext()  → context
-    //   Step 2 (Augmentation): call rag.augmentPrompt()  → augmentedPrompt
-    //   Step 3 (Generation):  call rag.generateAnswer()  → answer
-    throw new Error("Not implemented");
+    if (!input.trim()) continue;
+
+    try {
+      const context = await rag.retrieveContext(input);
+      const augmentedPrompt = rag.augmentPrompt(context, input);
+      await rag.generateAnswer(augmentedPrompt);
+    } catch (error) {
+      console.error("❌ Error:", error instanceof Error ? error.message : error);
+    }
   }
 };
 
-//TODO:
-// Instantiate MicrowaveRAG and start the chat loop:
-//   - Create OpenAIEmbeddings with model "text-embedding-3-small"
-//   - Create ChatOpenAI with model "gpt-4o" and temperature 0
-//   - Construct MicrowaveRAG, await rag.ready, then call main(rag)
+const embeddings = new OpenAIEmbeddings({
+  model: "text-embedding-3-small",
+  apiKey: OPENAI_API_KEY,
+});
+const llmClient = new ChatOpenAI({
+  model: "gpt-4o",
+  temperature: 0,
+  apiKey: OPENAI_API_KEY,
+});
+
+const rag = new MicrowaveRAG(embeddings, llmClient);
+rag.ready.then(() => main(rag)).catch((error) => {
+  console.error("❌ Failed to initialise RAG:", error);
+  process.exit(1);
+});
